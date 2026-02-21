@@ -41,7 +41,7 @@ Database:
 ---
 
 ## Project Structure
-
+```
 manuvision/
 │
 ├── frontend/
@@ -53,7 +53,7 @@ manuvision/
 │
 ├── docker-compose.yml
 └── README.md
-
+```
 ---
 
 ## Setup Instructions
