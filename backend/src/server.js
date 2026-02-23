@@ -12,7 +12,7 @@ const pool = new Pool({
   host: process.env.PGHOST || "localhost",
   port: Number(process.env.PGPORT || 5432),
   user: process.env.PGUSER || "manuv",
-  password: process.env.PGPASSWORD || "manuvpass",
+  password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE || "manuvdb",
   // prevents hanging forever if DB is unreachable
   connectionTimeoutMillis: 2000,
