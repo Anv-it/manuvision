@@ -2,119 +2,202 @@
 
 ManuVision is a full-stack Sign Language Recognition platform built with a production-style ML architecture.
 
-Sprint 1 establishes the complete end-to-end system using a dummy model to validate infrastructure and data flow.
+Sprint 2 upgrades the system from a dummy predictor to a real trained classifier with feature normalization, dataset capture, and real-time inference.
 
 ---
 
-## Features (Sprint 1)
+## Current Capabilities (Sprint 2)
 
 - Webcam-based hand tracking (MediaPipe Hands)
-- Real-time landmark extraction (21 3D keypoints)
-- Frontend → Backend inference API (5 FPS polling)
-- Live prediction display
-- Practice mode with real-time correctness feedback
-- Postgres logging of prediction attempts
+- Real-time landmark extraction (21 × 3D keypoints)
+- Feature normalization (translation + scale invariant)
+- Logistic Regression classifier
+- Live model inference via FastAPI
+- Rolling prediction smoothing (frontend)
+- Dataset capture & labeling interface
+- NDJSON export for training
+- Postgres-backed sample storage
 - Dockerized database
-- Health check endpoint with DB status monitoring
+- Health check endpoint
+
+---
+
+## ML Pipeline
+
+### Feature Engineering
+
+Each frame produces 21 3D landmarks from MediaPipe.
+
+Preprocessing steps:
+
+1. **Translation invariance**
+   - Subtract wrist landmark (LM0)
+
+2. **Scale invariance**
+   - Divide by distance between wrist and middle MCP (LM0 → LM9)
+
+3. **Flatten**
+   - 21 × 3 → 63-dimensional feature vector
+
+This makes the model robust to:
+- Camera position
+- Hand distance
+- Small translations
+
+---
+
+### Model
+
+- Logistic Regression (multiclass)
+- Train/test split with stratification
+- Confusion matrix + classification report
+- Model persistence via joblib
+
+Artifacts saved to:
+
+```
+backend/models/
+model.joblib
+metadata.json
+```
 
 ---
 
 ## Architecture
 
-Frontend:
+### Frontend
 - React (Vite)
 - MediaPipe Hands
-- Axios API polling
+- Axios polling (~5 FPS)
+- Real-time prediction smoothing
 
-Backend:
-- Node.js (Express)
-- REST API endpoints:
-  - POST /v1/predict
-  - POST /v1/attempts
-  - GET /health
-- Postgres (via pg)
+### Backend
+- FastAPI
+- REST endpoints:
+  - `POST /v1/predict`
+  - `POST /v1/samples`
+  - `GET /v1/samples/export`
+  - `GET /v1/samples/stats`
+  - `GET /health`
+- SQLAlchemy ORM
+- Pydantic validation
 
-Database:
+### Database
 - Dockerized Postgres 16
-- attempts table for telemetry logging
+- `samples` table (aggregated landmarks + label)
 
 ---
 
 ## Project Structure
+
 ```
 manuvision/
 │
 ├── frontend/
-│   ├── src/pages/Translate.jsx
-│   ├── src/pages/Practice.jsx
+│ ├── src/pages/Translate.jsx
+│ ├── src/pages/Practice.jsx
 │
 ├── backend/
-│   ├── src/server.js
+│ ├── app/
+│ │ ├── api/
+│ │ ├── core/
+│ │ ├── ml/
+│ │ │ ├── features.py
+│ │ │ └── model.py
+│ │ └── main.py
+│ │
+│ ├── scripts/
+│ │ └── train.py
+│ │
+│ └── models/
 │
 ├── docker-compose.yml
 └── README.md
 ```
+
 ---
 
 ## Setup Instructions
 
 ### 1. Clone
 
+```bash
 git clone <your-repo-url>
 cd manuvision
-
-### 2. Start Postgres (Docker required)
-
+```
+2. Start Postgres
+```
 docker compose up -d
-
-### 3. Run Backend
-
+```
+3. Run Backend
+```
 cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+Backend runs on:
+```
+http://localhost:8000
+```
+4. Run Frontend
+```
+cd frontend
 npm install
 npm run dev
-
-### 4. Run Frontend
-
-cd ../frontend
-npm install
-npm run dev
-
-Visit:
-
+```
+Frontend runs on:
+```
 http://localhost:5173
+```
+
+---
+
+## Training a Model
+
+1. Collect labeled samples via the Translate page
+
+2. Export dataset:
+```
+mkdir -p backend/data
+curl "http://localhost:8000/v1/samples/export?format=ndjson" -o backend/data/samples.ndjson
+```
+
+3. Train:
+```
+python -m backend.scripts.train
+```
+
+4. Restart backend to load the new model.
 
 ---
 
 ## Health Check
-
-curl http://localhost:8080/health
-
+```
+curl http://localhost:8000/health
+```
 Returns:
-
+```
 {
-  "ok": true,
-  "dbOk": true
+  "status": "ok"
 }
-
+```
 ---
 
-## Database Schema
+## Future Improvements
 
-CREATE TABLE attempts (
-  id SERIAL PRIMARY KEY,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  target_letter TEXT NOT NULL,
-  predicted_letter TEXT NOT NULL,
-  confidence REAL NOT NULL,
-  is_correct BOOLEAN NOT NULL
-);
+- Add probability-based smoothing
+
+- Add left-hand canonical mirroring
+
+- Expand dataset to full ASL alphabet
+
+- Add model evaluation dashboard
+
+- Improve robustness across sessions & lighting
+
+- Upgrade to MLP or tree-based classifier
+
 
 ---
-
-## Sprint 2 Roadmap
-
-- Replace dummy model with trained classifier
-- Landmark normalization
-- Dataset capture endpoint
-- Evaluation metrics
-- Model versioning
