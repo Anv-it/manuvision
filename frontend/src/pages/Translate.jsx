@@ -27,8 +27,9 @@ export default function Translate({ onPrediction, latestLandmarksRef, onHandDete
 
   const [status, setStatus] = useState("Initializing...");
   const [pred, setPred] = useState({ label: "-", confidence: 0 });
+  const predQueueRef = useRef([]); // last N labels
+  const SMOOTH_N = 7;
 
-  // ✅ ADD THESE INSIDE THE COMPONENT
   const [targetLabel, setTargetLabel] = useState("A");
   const [saving, setSaving] = useState(false);
   const [lastSavedId, setLastSavedId] = useState(null);
@@ -130,10 +131,23 @@ export default function Translate({ onPrediction, latestLandmarksRef, onHandDete
 
       try {
         const res = await axios.post(`${API_BASE}/v1/predict`, { landmarks });
-        setPred(res.data);
-        onPrediction?.(res.data);
+        const raw = res.data; // {label, confidence}
+
+        // --- smoothing (majority vote over last N labels)
+        predQueueRef.current.push(raw.label);
+        if (predQueueRef.current.length > SMOOTH_N) predQueueRef.current.shift();
+
+        const counts = {};
+        for (const l of predQueueRef.current) counts[l] = (counts[l] || 0) + 1;
+        const smoothedLabel = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+
+        const smoothed = { ...raw, label: smoothedLabel };
+
+        setPred(smoothed);
+        onPrediction?.(smoothed);
       } catch (e) {
         setPred({ label: "-", confidence: 0 });
+        predQueueRef.current = [];
       }
     }, 200);
 
