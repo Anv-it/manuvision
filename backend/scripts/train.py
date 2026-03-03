@@ -12,6 +12,10 @@ import joblib
 
 from backend.app.ml.features import featurize
 
+import os, urllib.request
+
+EXPORT_URL = os.getenv("EXPORT_URL", "http://localhost:8000/v1/samples/export?format=ndjson")
+
 DATA_PATH = Path("backend/data/samples.ndjson")
 OUT_DIR = Path("backend/models")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,7 +46,10 @@ def build_xy(rows):
 
 def main():
     if not DATA_PATH.exists():
-        raise SystemExit(f"Missing {DATA_PATH}. Export first via curl.")
+        print(f"Missing {DATA_PATH}. Fetching from API: {EXPORT_URL}")
+        DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(EXPORT_URL) as resp:
+            DATA_PATH.write_bytes(resp.read())
 
     rows = load_ndjson(DATA_PATH)
     X, y = build_xy(rows)

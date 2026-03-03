@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { Hands } from "@mediapipe/hands";
-import { Camera } from "@mediapipe/camera_utils";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
@@ -22,17 +20,58 @@ function meanAggregate(frames) {
   return out;
 }
 
-export default function Translate({ onPrediction, latestLandmarksRef, onHandDetected }) {
+function avgVectors(vectors) {
+  if (!vectors || vectors.length === 0) return [];
+  const dim = vectors[0].length;
+  const out = new Array(dim).fill(0);
+  for (const v of vectors) {
+    for (let i = 0; i < dim; i++) out[i] += v[i];
+  }
+  for (let i = 0; i < dim; i++) out[i] /= vectors.length;
+  return out;
+}
+
+function argmax(arr) {
+  let bestIdx = 0;
+  let bestVal = -Infinity;
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] > bestVal) {
+      bestVal = arr[i];
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+export default function Translate({
+  onPrediction,
+  latestLandmarksRef,
+  handDetected,
+  trackerStatus,
+  stream,
+}) {
   const videoRef = useRef(null);
 
-  const [status, setStatus] = useState("Initializing...");
   const [pred, setPred] = useState({ label: "-", confidence: 0 });
-  const predQueueRef = useRef([]); // last N labels
+  const probsQueueRef = useRef([]); // last N probability vectors
+  const classesRef = useRef(null);  // class order for probs indices
+
   const SMOOTH_N = 7;
+  const CONF_THRESH = 0.6;
+
+  const confPct = Math.round((pred.confidence ?? 0) * 100);
+  const isGated = pred.label === "…";
 
   const [targetLabel, setTargetLabel] = useState("A");
   const [saving, setSaving] = useState(false);
   const [lastSavedId, setLastSavedId] = useState(null);
+
+  // ✅ Display the shared camera stream (HandTracker owns tracking)
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
 
   async function captureSample() {
     const CAPTURE_FRAMES = 10;
@@ -70,60 +109,7 @@ export default function Translate({ onPrediction, latestLandmarksRef, onHandDete
     }
   }
 
-  useEffect(() => {
-    let camera;
-
-    async function init() {
-      try {
-        const hands = new Hands({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-        });
-
-        hands.setOptions({
-          maxNumHands: 1,
-          modelComplexity: 1,
-          minDetectionConfidence: 0.6,
-          minTrackingConfidence: 0.6,
-        });
-
-        hands.onResults((results) => {
-          const lm = results?.multiHandLandmarks?.[0] ?? null;
-
-          if (!lm) {
-            latestLandmarksRef.current = null;
-            onHandDetected?.(false);
-            return;
-          }
-
-          latestLandmarksRef.current = lm.map((p) => [p.x, p.y, p.z]);
-          onHandDetected?.(true);
-        });
-
-        camera = new Camera(videoRef.current, {
-          onFrame: async () => {
-            await hands.send({ image: videoRef.current });
-          },
-          width: 640,
-          height: 480,
-        });
-
-        camera.start();
-        setStatus("Running ✅ (show your hand)");
-      } catch (e) {
-        console.error(e);
-        setStatus("Failed to init MediaPipe ❌");
-      }
-    }
-
-    init();
-
-    return () => {
-      try {
-        camera?.stop();
-      } catch {}
-    };
-  }, []);
-
+  // ✅ Poll backend prediction (uses landmarks written by HandTracker)
   useEffect(() => {
     const id = setInterval(async () => {
       const landmarks = latestLandmarksRef?.current;
@@ -131,70 +117,176 @@ export default function Translate({ onPrediction, latestLandmarksRef, onHandDete
 
       try {
         const res = await axios.post(`${API_BASE}/v1/predict`, { landmarks });
-        const raw = res.data; // {label, confidence}
+        const raw = res.data; // { label, confidence, classes, probs }
 
-        // --- smoothing (majority vote over last N labels)
-        predQueueRef.current.push(raw.label);
-        if (predQueueRef.current.length > SMOOTH_N) predQueueRef.current.shift();
+        const classes = Array.isArray(raw.classes) ? raw.classes : [];
+        const probs = Array.isArray(raw.probs) ? raw.probs : [];
 
-        const counts = {};
-        for (const l of predQueueRef.current) counts[l] = (counts[l] || 0) + 1;
-        const smoothedLabel = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+        // If backend doesn't provide probs/classes properly, fallback to raw output
+        if (classes.length === 0 || probs.length === 0 || classes.length !== probs.length) {
+          probsQueueRef.current = [];
+          classesRef.current = null;
+          setPred(raw);
+          onPrediction?.(raw);
+          return;
+        }
 
-        const smoothed = { ...raw, label: smoothedLabel };
+        // If class order changes (retrain), reset window
+        if (
+          !classesRef.current ||
+          classesRef.current.length !== classes.length ||
+          classesRef.current.some((c, i) => c !== classes[i])
+        ) {
+          classesRef.current = classes;
+          probsQueueRef.current = [];
+        }
+
+        // Push probs to rolling window
+        probsQueueRef.current.push(probs);
+        if (probsQueueRef.current.length > SMOOTH_N) probsQueueRef.current.shift();
+
+        // Average probs + argmax
+        const avg = avgVectors(probsQueueRef.current);
+        const idx = argmax(avg);
+
+        const smoothedLabel = classesRef.current[idx];
+        const smoothedConf = avg[idx] ?? 0;
+
+        // Confidence gating
+        const smoothed =
+          smoothedConf >= CONF_THRESH
+            ? { ...raw, label: smoothedLabel, confidence: smoothedConf }
+            : { ...raw, label: "…", confidence: smoothedConf };
 
         setPred(smoothed);
         onPrediction?.(smoothed);
       } catch (e) {
         setPred({ label: "-", confidence: 0 });
-        predQueueRef.current = [];
+        probsQueueRef.current = [];
+        classesRef.current = null;
       }
     }, 200);
 
     return () => clearInterval(id);
-  }, []);
+  }, [latestLandmarksRef, onPrediction]);
 
   return (
-    <div style={{ padding: 16, display: "grid", gap: 12 }}>
-      <h2>Translate</h2>
-      <div>{status}</div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      {/* LEFT: Camera + Capture */}
+      <div className="bg-white border rounded-2xl p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Translate</h2>
+            <div className="mt-1 text-sm text-zinc-600">{trackerStatus}</div>
+          </div>
 
-      <video
-        ref={videoRef}
-        style={{ width: 640, borderRadius: 12, border: "1px solid #ddd" }}
-        autoPlay
-        playsInline
-        muted
-      />
+          <span
+            className={[
+              "inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs",
+              handDetected ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600",
+            ].join(" ")}
+          >
+            <span
+              className={[
+                "h-2 w-2 rounded-full",
+                handDetected ? "bg-emerald-500" : "bg-zinc-400",
+              ].join(" ")}
+            />
+            {handDetected ? "Hand detected" : "No hand"}
+          </span>
+        </div>
 
-      <div style={{ fontSize: 22 }}>
-        Prediction: <b>{pred.label}</b>{" "}
-        <span style={{ opacity: 0.7 }}>
-          ({Math.round((pred.confidence ?? 0) * 100)}%)
-        </span>
+        <div className="bg-zinc-100 rounded-xl overflow-hidden border">
+          <video
+            ref={videoRef}
+            className="w-full max-w-full h-auto"
+            autoPlay
+            playsInline
+            muted
+          />
+        </div>
+
+        {/* Capture panel */}
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="text-sm text-zinc-600">Label</div>
+
+          <select
+            className="border rounded-lg px-3 py-2 text-sm bg-white"
+            value={targetLabel}
+            onChange={(e) => setTargetLabel(e.target.value)}
+          >
+            {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((ch) => (
+              <option key={ch} value={ch}>
+                {ch}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={captureSample}
+            disabled={saving || !latestLandmarksRef?.current}
+            className={[
+              "px-4 py-2 rounded-lg text-sm font-medium transition",
+              saving || !latestLandmarksRef?.current
+                ? "bg-zinc-200 text-zinc-500 cursor-not-allowed"
+                : "bg-black text-white hover:opacity-90",
+            ].join(" ")}
+          >
+            {saving ? "Saving..." : "Capture Sample"}
+          </button>
+
+          {lastSavedId && (
+            <span className="text-sm text-zinc-600">Saved #{lastSavedId}</span>
+          )}
+        </div>
       </div>
 
-      {/* ✅ NEW CAPTURE PANEL */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-        <span style={{ opacity: 0.8 }}>Label:</span>
+      {/* RIGHT: Prediction + Confidence + Observability */}
+      <div className="flex flex-col gap-6">
+        <div className="bg-white border rounded-2xl p-6 shadow-sm">
+          <div className="text-xs text-zinc-500">Prediction</div>
+          <div className="mt-2 flex items-end gap-3">
+            <div className="text-6xl font-semibold tracking-tight">{pred.label}</div>
+            <div className="pb-2 text-sm text-zinc-500">
+              {isGated ? "Below threshold" : "Live"}
+            </div>
+          </div>
+        </div>
 
-        <select value={targetLabel} onChange={(e) => setTargetLabel(e.target.value)}>
-          {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((ch) => (
-            <option key={ch} value={ch}>
-              {ch}
-            </option>
-          ))}
-        </select>
+        <div className="bg-white border rounded-2xl p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-zinc-500">Confidence</div>
+            <div className="text-xs text-zinc-500">
+              Smooth {SMOOTH_N} • Gate {Math.round(CONF_THRESH * 100)}%
+            </div>
+          </div>
 
-        <button
-          onClick={captureSample}
-          disabled={saving || !latestLandmarksRef?.current}
-          style={{ padding: "8px 12px" }}
-        >
-          {saving ? "Saving..." : "Capture Sample"}
-        </button>
+          <div className="mt-3 text-2xl font-medium">{confPct}%</div>
 
-        {lastSavedId && <span style={{ opacity: 0.8 }}>Saved #{lastSavedId}</span>}
+          <div className="mt-3 h-2 w-full rounded-full bg-zinc-100 overflow-hidden">
+            <div
+              className="h-full bg-black"
+              style={{ width: `${Math.min(100, Math.max(0, confPct))}%` }}
+            />
+          </div>
+
+          <div className="mt-3 text-xs text-zinc-500">
+            {isGated
+              ? `Prediction gated: confidence ${confPct}% < ${Math.round(CONF_THRESH * 100)}%`
+              : `Prediction unlocked: confidence ${confPct}%`}
+          </div>
+        </div>
+
+        <div className="bg-white border rounded-2xl p-6 shadow-sm">
+          <div className="text-xs text-zinc-500">Model</div>
+          <div className="mt-2 text-sm text-zinc-700">
+            Ready for observability: version • labels • samples • latency
+          </div>
+          <div className="mt-2 text-xs text-zinc-500">
+            Next: pull live values from{" "}
+            <code className="px-1 py-0.5 bg-zinc-100 rounded">/health</code>
+          </div>
+        </div>
       </div>
     </div>
   );
