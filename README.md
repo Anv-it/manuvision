@@ -1,102 +1,142 @@
 # ManuVision
 
-ManuVision is a full-stack Sign Language Recognition platform built with a production-style ML architecture.
+**ManuVision** is a production-style Sign Language Recognition platform
+built with a modular ML + API + frontend architecture.
 
-Sprint 2 upgrades the system from a dummy predictor to a real trained classifier with feature normalization, dataset capture, and real-time inference.
+The system supports real-time ASL letter recognition, dataset capture,
+and interactive training --- powered by a centralized hand-tracking
+pipeline and a normalized feature-based classifier.
 
----
+------------------------------------------------------------------------
 
-## Current Capabilities (Sprint 2)
+# Current Capabilities
 
-- Webcam-based hand tracking (MediaPipe Hands)
-- Real-time landmark extraction (21 × 3D keypoints)
-- Feature normalization (translation + scale invariant)
-- Logistic Regression classifier
-- Live model inference via FastAPI
-- Rolling prediction smoothing (frontend)
-- Dataset capture & labeling interface
-- NDJSON export for training
-- Postgres-backed sample storage
-- Dockerized database
-- Health check endpoint
+## Core ML
 
----
+-   MediaPipe-based 21-point 3D hand landmark tracking
+-   Translation & scale-invariant feature normalization
+-   63-dimensional wrist-centered feature vector
+-   Multiclass Logistic Regression classifier
+-   Stratified train/test split
+-   Confusion matrix + classification report
+-   Model persistence via `joblib`
 
-## ML Pipeline
+## Real-Time Inference
 
-### Feature Engineering
+-   FastAPI backend serving predictions
+-   Frontend polling (\~5 FPS)
+-   Rolling probability smoothing
+-   Confidence gating (threshold-based unlock)
 
-Each frame produces 21 3D landmarks from MediaPipe.
+## UI Modes
 
-Preprocessing steps:
+### Translate Mode
 
-1. **Translation invariance**
-   - Subtract wrist landmark (LM0)
+-   Live prediction display
+-   Confidence visualization
+-   Dataset capture & labeling
 
-2. **Scale invariance**
-   - Divide by distance between wrist and middle MCP (LM0 → LM9)
+### Practice Mode
 
-3. **Flatten**
-   - 21 × 3 → 63-dimensional feature vector
+-   Target → Attempt → Lock-in evaluation
+-   Stable prediction holding
+-   Session tracking (attempts, accuracy)
+-   Real-time camera reuse (no duplicate trackers)
 
-This makes the model robust to:
-- Camera position
-- Hand distance
-- Small translations
+## Architecture Improvements
 
----
+-   Centralized `HandTracker` component
+-   Shared camera stream across pages
+-   Single MediaPipe lifecycle
+-   Observability-ready UI layout
 
-### Model
+------------------------------------------------------------------------
 
-- Logistic Regression (multiclass)
-- Train/test split with stratification
-- Confusion matrix + classification report
-- Model persistence via joblib
+# ML Pipeline
 
-Artifacts saved to:
+## Feature Engineering
 
+Each frame produces 21 3D landmarks.
+
+Preprocessing:
+
+1.  **Translation invariance**
+    -   Subtract wrist landmark (LM0)
+2.  **Scale invariance**
+    -   Normalize by wrist → middle MCP distance (LM0 → LM9)
+3.  **Flatten**
+    -   21 × 3 → 63-dimensional vector
+
+This makes predictions robust to: - Camera position - Hand distance -
+Minor translations
+
+------------------------------------------------------------------------
+
+## Model
+
+-   Logistic Regression (multiclass)
+-   Probability outputs used for smoothing
+-   Rolling window averaging (frontend)
+-   Confidence threshold gating
+
+Artifacts:
 ```
-backend/models/
-model.joblib
+backend/models/ 
+model.joblib 
 metadata.json
 ```
 
----
+------------------------------------------------------------------------
 
-## Architecture
+# 🏗 Architecture
 
-### Frontend
-- React (Vite)
-- MediaPipe Hands
-- Axios polling (~5 FPS)
-- Real-time prediction smoothing
+## Frontend
 
-### Backend
-- FastAPI
-- REST endpoints:
-  - `POST /v1/predict`
-  - `POST /v1/samples`
-  - `GET /v1/samples/export`
-  - `GET /v1/samples/stats`
-  - `GET /health`
-- SQLAlchemy ORM
-- Pydantic validation
+-   React (Vite)
+-   TailwindCSS
+-   Centralized HandTracker
+-   Axios polling
+-   Prediction smoothing + gating
+-   Two-mode UI (Translate / Practice)
 
-### Database
-- Dockerized Postgres 16
-- `samples` table (aggregated landmarks + label)
+## Backend
 
----
+-   FastAPI
+-   SQLAlchemy ORM
+-   Pydantic validation
 
-## Project Structure
+Endpoints:
 
+-   POST /v1/predict
+-   POST /v1/samples
+-   GET /v1/samples/export
+-   GET /v1/samples/stats
+-   GET /health
+
+## Database
+
+-   Dockerized Postgres 16
+-   `samples` table storing:
+    -   Aggregated landmarks
+    -   Label
+    -   Session ID
+
+------------------------------------------------------------------------
+
+# Project Structure
 ```
-manuvision/
-│
-├── frontend/
-│ ├── src/pages/Translate.jsx
-│ ├── src/pages/Practice.jsx
-│
+manuvision/ 
+│ 
+├── frontend/ 
+│ ├── src/ 
+│ │ ├── components/ 
+│ │ │ ├──HandTracker.jsx 
+│ │ │ └── Layout.jsx 
+│ │ ├── pages/ 
+│ │ │ ├──Translate.jsx 
+│ │ │ └── Practice.jsx 
+│ │ └── App.jsx 
+│ 
 ├── backend/
 │ ├── app/
 │ │ ├── api/
@@ -114,90 +154,67 @@ manuvision/
 ├── docker-compose.yml
 └── README.md
 ```
+------------------------------------------------------------------------
 
----
+# ⚙ Setup
 
-## Setup Instructions
-
-### 1. Clone
-
-```bash
-git clone <your-repo-url>
-cd manuvision
+## 1. Clone
 ```
-2. Start Postgres
+git clone `<repo-url>`{=html} cd manuvision
+```
+## 2. Start Postgres
 ```
 docker compose up -d
 ```
-3. Run Backend
+## 3. Backend
 ```
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+cd backend python -m venv .venv source .venv/bin/activate pip install -r
+requirements.txt uvicorn app.main:app --reload
 ```
-Backend runs on:
-```
-http://localhost:8000
-```
-4. Run Frontend
-```
-cd frontend
-npm install
-npm run dev
-```
-Frontend runs on:
-```
-http://localhost:5173
-```
+Runs on: http://localhost:8000
 
----
-
-## Training a Model
-
-1. Collect labeled samples via the Translate page
-
-2. Export dataset:
+## 4. Frontend
 ```
-mkdir -p backend/data
-curl "http://localhost:8000/v1/samples/export?format=ndjson" -o backend/data/samples.ndjson
+cd frontend npm install npm run dev
 ```
+Runs on: http://localhost:5173
 
-3. Train:
+------------------------------------------------------------------------
+
+# Training Workflow
+
+1.  Capture labeled samples via Translate mode
+
+2.  Export dataset
+```
+mkdir -p backend/data curl
+"http://localhost:8000/v1/samples/export?format=ndjson" -o
+backend/data/samples.ndjson
+```
+3.  Train model
 ```
 python -m backend.scripts.train
 ```
+4.  Restart backend
 
-4. Restart backend to load the new model.
+------------------------------------------------------------------------
 
----
-
-## Health Check
+# 🔎 Health Check
 ```
 curl http://localhost:8000/health
 ```
 Returns:
 ```
-{
-  "status": "ok"
-}
+{ "status": "ok" }
 ```
----
+------------------------------------------------------------------------
 
-## Future Improvements
+# Roadmap
 
-- Add probability-based smoothing
-
-- Add left-hand canonical mirroring
-
-- Expand dataset to full ASL alphabet
-
-- Add model evaluation dashboard
-
-- Improve robustness across sessions & lighting
-
-- Upgrade to MLP or tree-based classifier
-
-
----
+-   Full ASL alphabet coverage
+-   Per-letter performance tracking
+-   Confusion matrix visualization
+-   Model version display in UI
+-   Dynamic sequence recognition (LSTM / TCN)
+-   Model retraining from UI
+-   Latency monitoring
