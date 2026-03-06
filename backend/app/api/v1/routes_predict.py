@@ -15,11 +15,17 @@ class PredictIn(BaseModel):
     )
 
 
+class TopPrediction(BaseModel):
+    label: str
+    prob: float
+
+
 class PredictOut(BaseModel):
     label: str
     confidence: float
     classes: List[str]
     probs: List[float]
+    top_predictions: List[TopPrediction]
     latency_ms: float | None = None
 
 
@@ -36,6 +42,15 @@ def predict(payload: PredictIn):
 
     try:
         out = bundle.predict(payload.landmarks, handedness=payload.handedness)
+
+        pairs = [
+            {"label": label, "prob": float(prob)}
+            for label, prob in zip(out["classes"], out["probs"])
+        ]
+        pairs.sort(key=lambda x: x["prob"], reverse=True)
+
+        out["top_predictions"] = pairs[:3]
+
         return PredictOut(**out)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

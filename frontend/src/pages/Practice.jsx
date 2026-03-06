@@ -24,7 +24,7 @@ function meanAggregate(frames) {
 }
 
 // REPLACE ONCE TRAINED ON ALL 26 LETTERS!!!!!!!!
-const PRACTICE_LETTERS = ["A", "B", "C"];
+const PRACTICE_LETTERS = ["A", "B", "C", "`D", "E", "F"];
 
 function randomLetter() {
   return PRACTICE_LETTERS[Math.floor(Math.random() * PRACTICE_LETTERS.length)];

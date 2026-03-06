@@ -30,13 +30,26 @@ export default function Translate({
 }) {
   const videoRef = useRef(null);
 
-  const pred = prediction ?? { label: "-", confidence: 0, latency_ms: null };
+  const pred = prediction ?? {
+    label: "-",
+    confidence: 0,
+    latency_ms: null,
+    top_predictions: [],
+  };
+
   const SMOOTH_N = 7;
   const CONF_THRESH = 0.6;
 
   const confPct = Math.round((pred.confidence ?? 0) * 100);
+  function getConfidenceColor(pct) {
+    if (pct >= 90) return "bg-emerald-500";
+    if (pct >= 70) return "bg-black";
+    return "bg-amber-500";
+  }
+  const confColor = getConfidenceColor(confPct);
   const isGated = pred.label === "…";
   const latencyText = pred.latency_ms != null ? `${pred.latency_ms} ms` : "—";
+  const topPredictions = pred.top_predictions ?? [];
 
   const [targetLabel, setTargetLabel] = useState("A");
   const [saving, setSaving] = useState(false);
@@ -172,11 +185,21 @@ export default function Translate({
             </div>
           </div>
 
-          <div className="mt-3 text-2xl font-medium">{confPct}%</div>
+          <div
+            className={`mt-3 text-2xl font-medium ${
+              confPct >= 90
+                ? "text-emerald-600"
+                : confPct >= 70
+                ? "text-zinc-900"
+                : "text-amber-600"
+            }`}
+          >
+            {confPct}%
+          </div>
 
           <div className="mt-3 h-2 w-full rounded-full bg-zinc-100 overflow-hidden">
             <div
-              className="h-full bg-black"
+              className={`h-full ${confColor} transition-all`}
               style={{ width: `${Math.min(100, Math.max(0, confPct))}%` }}
             />
           </div>
@@ -185,6 +208,44 @@ export default function Translate({
             {isGated
               ? `Prediction gated: confidence ${confPct}% < ${Math.round(CONF_THRESH * 100)}%`
               : `Prediction unlocked: confidence ${confPct}%`}
+          </div>
+        </div>
+
+        <div className="bg-white border rounded-2xl p-6 shadow-sm">
+          <div className="text-xs text-zinc-500">Top Predictions</div>
+
+          <div className="mt-4 space-y-3">
+            {topPredictions.length > 0 ? (
+              topPredictions.map((item, i) => {
+                const pct = Math.round((item.prob ?? 0) * 100);
+                return (
+                  <div
+                    key={item.label}
+                    className={`rounded-xl border px-4 py-2 ${
+                      i === 0
+                        ? "bg-zinc-100 border-zinc-300"
+                        : "bg-zinc-50 border-zinc-200"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className={`text-base ${i === 0 ? "font-semibold" : "font-medium"}`}>
+                        {item.label}
+                      </div>
+                      <div className="text-sm text-zinc-500">{pct}%</div>
+                    </div>
+
+                    <div className="mt-2 h-2 w-full rounded-full bg-zinc-200 overflow-hidden">
+                      <div
+                        className="h-full bg-black transition-all"
+                        style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="text-sm text-zinc-500">No prediction data yet.</div>
+            )}
           </div>
         </div>
 
