@@ -1,9 +1,25 @@
 # ManuVision
 
-**ManuVision** is a full-stack sign language recognition system that demonstrates
-a production-style machine learning workflow:
+**ManuVision** is a full-stack sign language recognition system that demonstrates a **production-style machine learning workflow**:
 
-data collection → feature engineering → model training → real-time inference.
+data collection → feature engineering → model training → real-time inference
+
+The system captures hand landmarks using MediaPipe, transforms them into normalized features, and performs real-time ASL letter prediction through a deployed FastAPI inference service.
+
+---
+
+# Live Demo
+
+Frontend (Vercel)  
+https://manuvision.vercel.app
+
+Backend API  
+https://manuvision.onrender.com
+
+API Docs  
+https://manuvision.onrender.com/docs
+
+---
 
 ## Demo
 
@@ -71,6 +87,8 @@ Frontend displays:
 - tracker status
 - handedness detection
 
+---
+
 ## UI Modes
 
 ### Translate Mode
@@ -81,6 +99,8 @@ Frontend displays:
 - Confidence gating (prevents unstable predictions)
 - Dataset capture & labeling
 - Handedness-aware inference
+
+---
 
 ### Practice Mode
 
@@ -93,6 +113,8 @@ Frontend displays:
 Note:
 Practice mode only samples from letters currently supported by the trained model.
 
+---
+
 ## Architecture Improvements
 
 - Centralized `HandTracker` component
@@ -100,6 +122,8 @@ Practice mode only samples from letters currently supported by the trained model
 - Single MediaPipe lifecycle
 - Handedness-aware feature canonicalization
 - Observability-ready UI layout
+
+---
 
 ## Current Dataset
 
@@ -138,7 +162,7 @@ This makes predictions robust to:
 
 ------------------------------------------------------------------------
 
-## Model
+# Model
 
 - Logistic Regression (multiclass)
 - Probability outputs used for smoothing
@@ -156,38 +180,83 @@ metadata.json
 
 ------------------------------------------------------------------------
 
-# Architecture
+# System Architecture
 
-## Frontend
+```
+User Camera
+     │
+     ▼
+MediaPipe Hand Tracking
+     │
+     ▼
+Feature Engineering
+(translation + scale normalization)
+     │
+     ▼
+FastAPI Inference Service
+(Render)
+     │
+     ▼
+Logistic Regression Model
+     │
+     ▼
+Prediction + Confidence Scores
+     │
+     ▼
+Frontend Visualization (Vercel)
+```
 
--   React (Vite)
--   TailwindCSS
--   Centralized HandTracker
--   Axios polling
--   Prediction smoothing + gating
--   Two-mode UI (Translate / Practice)
+### Frontend
 
-## Backend
+- React (Vite)
+- TailwindCSS
+- MediaPipe Hands
+- Centralized HandTracker
+- Prediction smoothing + gating
+- Translate + Practice UI modes
 
--   FastAPI
--   SQLAlchemy ORM
--   Pydantic validation
+---
+
+### Backend
+
+- FastAPI
+- SQLAlchemy ORM
+- Pydantic validation
 
 Endpoints:
 
--   POST /v1/predict
--   POST /v1/samples
--   GET /v1/samples/export
--   GET /v1/samples/stats
--   GET /health
+- POST /v1/predict
+- POST /v1/samples
+- POST /v1/attempts
 
-## Database
+- GET /v1/samples/export
+- GET /v1/samples/stats
+- GET /v1/samples/recent
 
--   Dockerized Postgres 16
--   `samples` table storing:
-    -   Aggregated landmarks
-    -   Label
-    -   Session ID
+- GET /health
+
+---
+
+### Database
+
+Production database is hosted on Neon (serverless Postgres).
+
+Local development uses Dockerized Postgres.
+
+Tables:
+
+`samples`
+- aggregated landmarks
+- label
+- handedness
+- session id
+
+`attempts`
+- target label
+- predicted label
+- confidence
+- correctness
+- session id
 
 ------------------------------------------------------------------------
 
@@ -267,14 +336,17 @@ The training script automatically:
 
 - Fetches the latest dataset from the API  
 - Saves a fresh NDJSON snapshot to `backend/data/samples.ndjson`  
-- Trains the classifier  
+- Trains classifier
 - Writes updated artifacts to `backend/models/`
 
 3. Restart backend
 
+Reload the API to use the updated model.
+
+
 ------------------------------------------------------------------------
 
-# 🔎 Health Check
+# Health Check
 ```
 curl http://localhost:8000/health
 ```
@@ -292,10 +364,23 @@ Returns:
 
 # Roadmap
 
+### ML
+
 - Full ASL alphabet coverage (A–Z)
 - Per-letter performance tracking
 - Confusion matrix visualization dashboard
-- Dark mode + UI polish
 - Model retraining from UI
 - Alternative models (Random Forest / XGBoost)
-- Dynamic sign recognition (sequence models: LSTM / TCN)
+
+### Product
+
+- Dark mode
+- Mobile optimization
+- Dataset management UI
+- Export dataset from browser
+
+### Research
+
+- Dynamic sign recognition
+- Temporal models (LSTM / TCN)
+- Gesture sequence recognition
