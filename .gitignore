@@ -24,3 +24,9 @@ backend/models/
 
 # OS
 .DS_Store
+
+# Data exports / migrations
+*.csv
+*.sql
+backend/data/*.csv
+backend/data/*.sql
