@@ -1,3 +1,5 @@
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+
 export type HealthResponse = {
   status: string;
   model_name: string;
@@ -8,7 +10,7 @@ export type HealthResponse = {
 };
 
 export async function getHealth(): Promise<HealthResponse> {
-  const res = await fetch("http://localhost:8000/health");
+  const res = await fetch(`${API_BASE}/health`);
 
   if (!res.ok) {
     throw new Error("Failed to fetch health");
