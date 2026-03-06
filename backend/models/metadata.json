@@ -1,0 +1,14 @@
+{
+  "model_version": "0.1",
+  "classes": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F"
+  ],
+  "samples": 599,
+  "feature_version": "v1_wrist_centered_scaled_by_0_to_9_flat63",
+  "model_type": "LogisticRegression"
+}
