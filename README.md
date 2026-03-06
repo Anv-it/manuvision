@@ -201,7 +201,8 @@ docker compose up -d
 ```
 ## 3. Backend
 ```
-cd backend python -m venv .venv 
+cd backend 
+python -m venv .venv 
 source .venv/bin/activate 
 pip install -r requirements.txt 
 uvicorn app.main:app --reload
@@ -255,6 +256,6 @@ Returns:
 -   Full ASL alphabet coverage
 -   Per-letter performance tracking
 -   Confusion matrix visualization
--   Model version display in UI
--   Dynamic sequence recognition (LSTM / TCN)
+-   Dark mode + UI polish
 -   Model retraining from UI
+-   Dynamic sequence recognition (LSTM / TCN)
