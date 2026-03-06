@@ -20,7 +20,9 @@ build/
 # ML artifacts
 *.joblib
 *.pkl
-backend/models/
+backend/models/*
+!backend/models/model.joblib
+!backend/models/metadata.json
 
 # OS
 .DS_Store
