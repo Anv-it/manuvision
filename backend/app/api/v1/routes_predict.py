@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -6,14 +6,22 @@ from app.ml.model import bundle
 
 router = APIRouter(prefix="/v1", tags=["predict"])
 
+
 class PredictIn(BaseModel):
     landmarks: List[List[float]] = Field(..., description="21 x 3 list")
+    handedness: Literal["Left", "Right"] | None = Field(
+        default=None,
+        description='Optional handedness label from MediaPipe ("Left" or "Right")',
+    )
+
 
 class PredictOut(BaseModel):
     label: str
     confidence: float
     classes: List[str]
     probs: List[float]
+    latency_ms: float | None = None
+
 
 @router.post("/predict", response_model=PredictOut)
 def predict(payload: PredictIn):
@@ -27,7 +35,7 @@ def predict(payload: PredictIn):
         )
 
     try:
-        out = bundle.predict(payload.landmarks)  # now returns dict
+        out = bundle.predict(payload.landmarks, handedness=payload.handedness)
         return PredictOut(**out)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

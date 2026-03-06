@@ -1,4 +1,5 @@
-from sqlalchemy import Column, BigInteger, Text, DateTime, Boolean, func
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, Boolean, func
+from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 from app.core.db import Base
 
@@ -14,3 +15,20 @@ class Sample(Base):
     handedness = Column(Text, nullable=True)
 
     is_valid = Column(Boolean, server_default="true", nullable=False)
+
+
+class Attempt(Base):
+    __tablename__ = "attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    target_label = Column(String, index=True)
+    predicted_label = Column(String)
+
+    confidence = Column(Float)
+
+    correct = Column(Boolean)
+
+    session_id = Column(String, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

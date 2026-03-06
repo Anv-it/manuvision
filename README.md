@@ -1,11 +1,9 @@
 # ManuVision
 
-**ManuVision** is a production-style Sign Language Recognition platform
-built with a modular ML + API + frontend architecture.
+**ManuVision** is a full-stack sign language recognition system that demonstrates
+a production-style machine learning workflow:
 
-The system supports real-time ASL letter recognition, dataset capture,
-and interactive training --- powered by a centralized hand-tracking
-pipeline and a normalized feature-based classifier.
+data collection → feature engineering → model training → real-time inference.
 
 ------------------------------------------------------------------------
 
@@ -24,9 +22,30 @@ pipeline and a normalized feature-based classifier.
 ## Real-Time Inference
 
 -   FastAPI backend serving predictions
--   Frontend polling (\~5 FPS)
+-   Frontend prediction polling (\~5 FPS)
 -   Rolling probability smoothing
 -   Confidence gating (threshold-based unlock)
+
+## Observability
+
+The system exposes runtime model information for debugging and monitoring.
+
+Backend endpoint:
+
+GET /health
+
+Returns:
+
+- model version
+- loaded classifier type
+- supported classes
+- dataset sample count
+
+Frontend displays:
+
+- inference latency
+- model metadata
+- live tracker status
 
 ## UI Modes
 
@@ -38,10 +57,14 @@ pipeline and a normalized feature-based classifier.
 
 ### Practice Mode
 
--   Target → Attempt → Lock-in evaluation
--   Stable prediction holding
--   Session tracking (attempts, accuracy)
--   Real-time camera reuse (no duplicate trackers)
+- Target → Attempt → Lock-in evaluation
+- Stable prediction detection
+- One-attempt-per-round evaluation
+- Session tracking (attempts, accuracy)
+- Real-time camera reuse (shared MediaPipe pipeline)
+
+Note:
+Practice mode only samples from letters currently supported by the trained model.
 
 ## Architecture Improvements
 
@@ -58,17 +81,26 @@ pipeline and a normalized feature-based classifier.
 
 Each frame produces 21 3D landmarks.
 
-Preprocessing:
+Preprocessing pipeline:
 
-1.  **Translation invariance**
-    -   Subtract wrist landmark (LM0)
-2.  **Scale invariance**
-    -   Normalize by wrist → middle MCP distance (LM0 → LM9)
-3.  **Flatten**
-    -   21 × 3 → 63-dimensional vector
+1. **Translation invariance**
+   - Subtract wrist landmark (LM0)
 
-This makes predictions robust to: - Camera position - Hand distance -
-Minor translations
+2. **Scale invariance**
+   - Normalize by wrist → middle MCP distance (LM0 → LM9)
+
+3. **Handedness canonicalization**
+   - Left hands are mirrored to match right-hand coordinate space
+
+4. **Flatten**
+   - 21 × 3 → 63-dimensional feature vector
+
+This makes predictions robust to:
+
+- Camera position
+- Hand distance
+- Minor translations
+- Left vs right hand usage
 
 ------------------------------------------------------------------------
 
@@ -88,7 +120,7 @@ metadata.json
 
 ------------------------------------------------------------------------
 
-# 🏗 Architecture
+# Architecture
 
 ## Frontend
 
@@ -125,31 +157,31 @@ Endpoints:
 
 # Project Structure
 ```
-manuvision/ 
-│ 
-├── frontend/ 
-│ ├── src/ 
-│ │ ├── components/ 
-│ │ │ ├──HandTracker.jsx 
-│ │ │ └── Layout.jsx 
-│ │ ├── pages/ 
-│ │ │ ├──Translate.jsx 
-│ │ │ └── Practice.jsx 
-│ │ └── App.jsx 
-│ 
+manuvision/
+│
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── HandTracker.jsx
+│       │   └── Layout.jsx
+│       ├── pages/
+│       │   ├── Translate.jsx
+│       │   └── Practice.jsx
+│       └── App.jsx
+│
 ├── backend/
-│ ├── app/
-│ │ ├── api/
-│ │ ├── core/
-│ │ ├── ml/
-│ │ │ ├── features.py
-│ │ │ └── model.py
-│ │ └── main.py
-│ │
-│ ├── scripts/
-│ │ └── train.py
-│ │
-│ └── models/
+│   ├── app/
+│   │   ├── api/
+│   │   ├── core/
+│   │   ├── ml/
+│   │   │   ├── features.py
+│   │   │   └── model.py
+│   │   └── main.py
+│   │
+│   ├── scripts/
+│   │   └── train.py
+│   │
+│   └── models/
 │
 ├── docker-compose.yml
 └── README.md
@@ -160,7 +192,8 @@ manuvision/
 
 ## 1. Clone
 ```
-git clone `<repo-url>`{=html} cd manuvision
+git clone `https://github.com/Anv-it/manuvision`{=html} 
+cd manuvision
 ```
 ## 2. Start Postgres
 ```
@@ -168,8 +201,10 @@ docker compose up -d
 ```
 ## 3. Backend
 ```
-cd backend python -m venv .venv source .venv/bin/activate pip install -r
-requirements.txt uvicorn app.main:app --reload
+cd backend python -m venv .venv 
+source .venv/bin/activate 
+pip install -r requirements.txt 
+uvicorn app.main:app --reload
 ```
 Runs on: http://localhost:8000
 
@@ -205,7 +240,13 @@ curl http://localhost:8000/health
 ```
 Returns:
 ```
-{ "status": "ok" }
+{
+  "status": "ok",
+  "model_name": "LogisticRegression",
+  "model_version": "0.1",
+  "classes": ["A","B","C"],
+  "samples": 136
+}
 ```
 ------------------------------------------------------------------------
 
@@ -217,4 +258,3 @@ Returns:
 -   Model version display in UI
 -   Dynamic sequence recognition (LSTM / TCN)
 -   Model retraining from UI
--   Latency monitoring

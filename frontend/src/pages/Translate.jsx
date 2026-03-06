@@ -20,53 +20,28 @@ function meanAggregate(frames) {
   return out;
 }
 
-function avgVectors(vectors) {
-  if (!vectors || vectors.length === 0) return [];
-  const dim = vectors[0].length;
-  const out = new Array(dim).fill(0);
-  for (const v of vectors) {
-    for (let i = 0; i < dim; i++) out[i] += v[i];
-  }
-  for (let i = 0; i < dim; i++) out[i] /= vectors.length;
-  return out;
-}
-
-function argmax(arr) {
-  let bestIdx = 0;
-  let bestVal = -Infinity;
-  for (let i = 0; i < arr.length; i++) {
-    if (arr[i] > bestVal) {
-      bestVal = arr[i];
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
-}
-
 export default function Translate({
-  onPrediction,
+  prediction,
   latestLandmarksRef,
+  latestHandednessRef,
   handDetected,
   trackerStatus,
   stream,
 }) {
   const videoRef = useRef(null);
 
-  const [pred, setPred] = useState({ label: "-", confidence: 0 });
-  const probsQueueRef = useRef([]); // last N probability vectors
-  const classesRef = useRef(null);  // class order for probs indices
-
+  const pred = prediction ?? { label: "-", confidence: 0, latency_ms: null };
   const SMOOTH_N = 7;
   const CONF_THRESH = 0.6;
 
   const confPct = Math.round((pred.confidence ?? 0) * 100);
   const isGated = pred.label === "…";
+  const latencyText = pred.latency_ms != null ? `${pred.latency_ms} ms` : "—";
 
   const [targetLabel, setTargetLabel] = useState("A");
   const [saving, setSaving] = useState(false);
   const [lastSavedId, setLastSavedId] = useState(null);
 
-  // ✅ Display the shared camera stream (HandTracker owns tracking)
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
@@ -96,7 +71,7 @@ export default function Translate({
       const res = await axios.post(`${API_BASE}/v1/samples`, {
         label: targetLabel,
         landmarks: aggregated,
-        handedness: null,
+        handedness: latestHandednessRef?.current ?? null,
         session_id,
       });
 
@@ -109,70 +84,8 @@ export default function Translate({
     }
   }
 
-  // ✅ Poll backend prediction (uses landmarks written by HandTracker)
-  useEffect(() => {
-    const id = setInterval(async () => {
-      const landmarks = latestLandmarksRef?.current;
-      if (!landmarks) return;
-
-      try {
-        const res = await axios.post(`${API_BASE}/v1/predict`, { landmarks });
-        const raw = res.data; // { label, confidence, classes, probs }
-
-        const classes = Array.isArray(raw.classes) ? raw.classes : [];
-        const probs = Array.isArray(raw.probs) ? raw.probs : [];
-
-        // If backend doesn't provide probs/classes properly, fallback to raw output
-        if (classes.length === 0 || probs.length === 0 || classes.length !== probs.length) {
-          probsQueueRef.current = [];
-          classesRef.current = null;
-          setPred(raw);
-          onPrediction?.(raw);
-          return;
-        }
-
-        // If class order changes (retrain), reset window
-        if (
-          !classesRef.current ||
-          classesRef.current.length !== classes.length ||
-          classesRef.current.some((c, i) => c !== classes[i])
-        ) {
-          classesRef.current = classes;
-          probsQueueRef.current = [];
-        }
-
-        // Push probs to rolling window
-        probsQueueRef.current.push(probs);
-        if (probsQueueRef.current.length > SMOOTH_N) probsQueueRef.current.shift();
-
-        // Average probs + argmax
-        const avg = avgVectors(probsQueueRef.current);
-        const idx = argmax(avg);
-
-        const smoothedLabel = classesRef.current[idx];
-        const smoothedConf = avg[idx] ?? 0;
-
-        // Confidence gating
-        const smoothed =
-          smoothedConf >= CONF_THRESH
-            ? { ...raw, label: smoothedLabel, confidence: smoothedConf }
-            : { ...raw, label: "…", confidence: smoothedConf };
-
-        setPred(smoothed);
-        onPrediction?.(smoothed);
-      } catch (e) {
-        setPred({ label: "-", confidence: 0 });
-        probsQueueRef.current = [];
-        classesRef.current = null;
-      }
-    }, 200);
-
-    return () => clearInterval(id);
-  }, [latestLandmarksRef, onPrediction]);
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      {/* LEFT: Camera + Capture */}
       <div className="bg-white border rounded-2xl p-5 shadow-sm">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
@@ -206,7 +119,6 @@ export default function Translate({
           />
         </div>
 
-        {/* Capture panel */}
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <div className="text-sm text-zinc-600">Label</div>
 
@@ -241,7 +153,6 @@ export default function Translate({
         </div>
       </div>
 
-      {/* RIGHT: Prediction + Confidence + Observability */}
       <div className="flex flex-col gap-6">
         <div className="bg-white border rounded-2xl p-6 shadow-sm">
           <div className="text-xs text-zinc-500">Prediction</div>
@@ -278,13 +189,27 @@ export default function Translate({
         </div>
 
         <div className="bg-white border rounded-2xl p-6 shadow-sm">
-          <div className="text-xs text-zinc-500">Model</div>
-          <div className="mt-2 text-sm text-zinc-700">
-            Ready for observability: version • labels • samples • latency
+          <div className="text-xs text-zinc-500">Inference Telemetry</div>
+
+          <div className="mt-3 grid grid-cols-2 gap-4">
+            <div>
+              <div className="text-xs text-zinc-500">Latency</div>
+              <div className="mt-1 text-lg font-medium">{latencyText}</div>
+            </div>
+
+            <div>
+              <div className="text-xs text-zinc-500">Polling</div>
+              <div className="mt-1 text-lg font-medium">200 ms</div>
+            </div>
           </div>
-          <div className="mt-2 text-xs text-zinc-500">
-            Next: pull live values from{" "}
-            <code className="px-1 py-0.5 bg-zinc-100 rounded">/health</code>
+
+          <div className="text-xs text-zinc-500">
+            Handedness: {latestHandednessRef?.current ?? "—"}
+          </div>
+
+          <div className="mt-4 text-xs text-zinc-500">
+            Latest backend inference response time from{" "}
+            <code className="px-1 py-0.5 bg-zinc-100 rounded">/v1/predict</code>
           </div>
         </div>
       </div>

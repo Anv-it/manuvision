@@ -36,9 +36,10 @@ def build_xy(rows):
     for r in rows:
         label = r.get("label")
         landmarks = r.get("landmarks")
+        handedness = r.get("handedness")
         if label is None or landmarks is None:
             continue
-        X.append(featurize(landmarks))
+        X.append(featurize(landmarks, handedness=handedness))
         y.append(label)
     X = np.stack(X).astype(np.float32)
     y = np.array(y)
@@ -85,9 +86,10 @@ def main():
     joblib.dump(model, OUT_DIR / "model.joblib")
 
     metadata = {
-        "labels": labels,
+        "model_version": "0.1",
+        "classes": labels,
+        "samples": int(len(y)),
         "feature_version": "v1_wrist_centered_scaled_by_0_to_9_flat63",
-        "num_samples": int(len(y)),
         "model_type": "LogisticRegression",
     }
     (OUT_DIR / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")

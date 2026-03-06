@@ -4,6 +4,7 @@ import { Camera } from "@mediapipe/camera_utils";
 
 export default function HandTracker({
   latestLandmarksRef,
+  latestHandednessRef,
   onHandDetected,
   onStatus,
   onStream,
@@ -30,14 +31,23 @@ export default function HandTracker({
 
         hands.onResults((results) => {
           const lm = results?.multiHandLandmarks?.[0] ?? null;
+          const rawHandedness = results?.multiHandedness?.[0]?.label ?? null;
+          const handednessLabel =
+            rawHandedness === "Left"
+              ? "Right"
+              : rawHandedness === "Right"
+              ? "Left"
+              : null;
 
           if (!lm) {
             latestLandmarksRef.current = null;
+            if (latestHandednessRef) latestHandednessRef.current = null;
             onHandDetected?.(false);
             return;
           }
 
           latestLandmarksRef.current = lm.map((p) => [p.x, p.y, p.z]);
+          if (latestHandednessRef) latestHandednessRef.current = handednessLabel;
           onHandDetected?.(true);
         });
 

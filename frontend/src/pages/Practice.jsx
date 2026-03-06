@@ -23,12 +23,24 @@ function meanAggregate(frames) {
   return out;
 }
 
+// REPLACE ONCE TRAINED ON ALL 26 LETTERS!!!!!!!!
+const PRACTICE_LETTERS = ["A", "B", "C"];
+
 function randomLetter() {
-  return LETTERS[Math.floor(Math.random() * 26)];
+  return PRACTICE_LETTERS[Math.floor(Math.random() * PRACTICE_LETTERS.length)];
 }
 
-export default function Practice({ prediction, latestLandmarksRef, handDetected, stream }) {
-  
+// function randomLetter() {
+//   return LETTERS[Math.floor(Math.random() * 26)];
+// }
+
+export default function Practice({ 
+  prediction, 
+  latestLandmarksRef, 
+  latestHandednessRef,
+  handDetected, 
+  stream,
+}) {
   const videoRef = useRef(null);
 
     useEffect(() => {
@@ -55,7 +67,7 @@ export default function Practice({ prediction, latestLandmarksRef, handDetected,
 
   // lock-in config (tweakable)
   const CONF_THRESH = 0.6;
-  const HOLD_FRAMES = 5; // require same label this many consecutive updates
+  const HOLD_FRAMES = 6; // require same label this many consecutive updates
 
   // internal streak tracker (doesn't cause re-renders)
   const streakRef = useRef({ label: null, count: 0 });
@@ -86,14 +98,37 @@ export default function Practice({ prediction, latestLandmarksRef, handDetected,
     // lock when stable for HOLD_FRAMES
     if (streakRef.current.count >= HOLD_FRAMES) {
       const finalLabel = streakRef.current.label;
+      const finalConfidence = liveConf;
+
       setLockedLabel(finalLabel);
 
       const isCorrect = finalLabel === target;
       setResult(isCorrect ? "correct" : "wrong");
       setAttempts((a) => a + 1);
       if (isCorrect) setCorrect((c) => c + 1);
+
+      logAttempt(finalLabel, finalConfidence);
     }
   }, [prediction, target, handDetected, lockedLabel, liveConf]);
+
+  async function logAttempt(finalLabel, finalConfidence) {
+  try {
+    const session_id =
+      localStorage.getItem("manuvision_session_id") ?? crypto.randomUUID();
+
+    localStorage.setItem("manuvision_session_id", session_id);
+
+    await axios.post(`${API_BASE}/v1/attempts`, {
+      target_label: target,
+      predicted_label: finalLabel,
+      confidence: finalConfidence,
+      correct: finalLabel === target,
+      session_id,
+    });
+  } catch (e) {
+    console.error("Failed to log attempt:", e);
+  }
+}
 
   async function captureSample() {
     if (!latestLandmarksRef?.current) return;
@@ -120,7 +155,7 @@ export default function Practice({ prediction, latestLandmarksRef, handDetected,
       const res = await axios.post(`${API_BASE}/v1/samples`, {
         label: target,
         landmarks: aggregated,
-        handedness: null,
+        handedness: latestHandednessRef?.current ?? null,
         session_id,
       });
 
@@ -208,7 +243,7 @@ export default function Practice({ prediction, latestLandmarksRef, handDetected,
 
         <div className="mt-6">
           <div className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm ${feedbackPill}`}>
-            {result === "correct" ? "✅ Correct" : result === "wrong" ? "❌ Try again" : "Waiting for stable prediction…"}
+            {result === "correct" ? "✅ Correct" : result === "wrong" ? "❌ Incorrect — next letter" : "Waiting for stable prediction…"}
           </div>
         </div>
 
