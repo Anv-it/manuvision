@@ -5,6 +5,19 @@ a production-style machine learning workflow:
 
 data collection → feature engineering → model training → real-time inference.
 
+## Demo
+
+### Translate Mode
+
+Real-time ASL letter recognition with probability visualization and inference telemetry.
+
+![Translate Demo](docs/translate_demo.png)
+
+### Practice Mode
+
+Interactive training mode with attempt tracking, accuracy statistics, and stable prediction detection.
+
+![Practice Demo](docs/practice_demo.png)
 ------------------------------------------------------------------------
 
 # Current Capabilities
