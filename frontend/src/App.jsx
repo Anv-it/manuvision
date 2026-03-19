@@ -37,17 +37,71 @@ function argmax(arr) {
   return bestIdx;
 }
 
+function hasMotion(sequenceFrames) {
+  if (!Array.isArray(sequenceFrames) || sequenceFrames.length < 12) return false;
+
+  let path = 0;
+  for (let i = 1; i < sequenceFrames.length; i++) {
+    const prev = sequenceFrames[i - 1]?.[8];
+    const curr = sequenceFrames[i]?.[8];
+    if (!prev || !curr) continue;
+    path += Math.hypot(curr[0] - prev[0], curr[1] - prev[1]);
+  }
+
+  return path >= 0.06;
+}
+
+function smoothStaticPrediction(raw, probsQueueRef, classesRef, smoothN, confThresh) {
+  const classes = Array.isArray(raw?.classes) ? raw.classes : [];
+  const probs = Array.isArray(raw?.probs) ? raw.probs : [];
+
+  if (classes.length === 0 || probs.length === 0 || classes.length !== probs.length) {
+    return {
+      label: raw?.label ?? "-",
+      confidence: raw?.confidence ?? 0,
+      latency_ms: raw?.latency_ms ?? null,
+      top_predictions: raw?.top_predictions ?? [],
+      source: raw?.source ?? "static",
+    };
+  }
+
+  if (
+    !classesRef.current ||
+    classesRef.current.length !== classes.length ||
+    classesRef.current.some((c, i) => c !== classes[i])
+  ) {
+    classesRef.current = classes;
+    probsQueueRef.current = [];
+  }
+
+  probsQueueRef.current.push(probs);
+  if (probsQueueRef.current.length > smoothN) probsQueueRef.current.shift();
+
+  const avg = avgVectors(probsQueueRef.current);
+  const idx = argmax(avg);
+  const smoothedLabel = classesRef.current[idx];
+  const smoothedConf = avg[idx] ?? 0;
+
+  return smoothedConf >= confThresh
+    ? { ...raw, label: smoothedLabel, confidence: smoothedConf, source: "static" }
+    : { ...raw, label: "…", confidence: smoothedConf, source: "static" };
+}
+
 export default function App() {
   const [prediction, setPrediction] = React.useState({
     label: "-",
     confidence: 0,
     latency_ms: null,
+    source: "static",
   });
 
   const probsQueueRef = React.useRef([]);
   const classesRef = React.useRef(null);
+  const sequenceBufferRef = React.useRef([]);
+  const dynamicEnabledRef = React.useRef(true);
   const SMOOTH_N = 7;
   const CONF_THRESH = 0.6;
+  const DYNAMIC_CONF_THRESH = 0.72;
     
   const latestLandmarksRef = React.useRef(null);
   const latestHandednessRef = React.useRef(null);
@@ -63,62 +117,64 @@ export default function App() {
     const id = setInterval(async () => {
       const landmarks = latestLandmarksRef.current;
       const handedness = latestHandednessRef.current ?? null;
+      const sequenceFrames = (sequenceBufferRef.current ?? []).map((item) => item.landmarks);
 
       if (!landmarks) {
-        setPrediction({ label: "-", confidence: 0, latency_ms: null });
+        setPrediction({ label: "-", confidence: 0, latency_ms: null, source: "static" });
         probsQueueRef.current = [];
         classesRef.current = null;
         return;
       }
 
       try {
-        const res = await axios.post(`${API_BASE}/v1/predict`, {
-          landmarks,
-          handedness,
-        });
+        const shouldQueryDynamic =
+          dynamicEnabledRef.current && hasMotion(sequenceFrames);
 
-        const raw = res.data;
-        const classes = Array.isArray(raw.classes) ? raw.classes : [];
-        const probs = Array.isArray(raw.probs) ? raw.probs : [];
+        const [staticRes, dynamicRes] = await Promise.allSettled([
+          axios.post(`${API_BASE}/v1/predict`, {
+            landmarks,
+            handedness,
+          }),
+          shouldQueryDynamic
+            ? axios.post(`${API_BASE}/v1/predict-sequence`, {
+                frames: sequenceFrames,
+                handedness,
+              })
+            : Promise.resolve(null),
+        ]);
 
-        if (classes.length === 0 || probs.length === 0 || classes.length !== probs.length) {
-          const fallbackPred = {
-            label: raw.label ?? "-",
-            confidence: raw.confidence ?? 0,
-            latency_ms: raw.latency_ms ?? null,
-          };
-          setPrediction(fallbackPred);
-          probsQueueRef.current = [];
-          classesRef.current = null;
-          return;
+        if (staticRes.status !== "fulfilled") {
+          throw staticRes.reason;
         }
 
-        if (
-          !classesRef.current ||
-          classesRef.current.length !== classes.length ||
-          classesRef.current.some((c, i) => c !== classes[i])
-        ) {
-          classesRef.current = classes;
-          probsQueueRef.current = [];
+        const staticPred = smoothStaticPrediction(
+          staticRes.value.data,
+          probsQueueRef,
+          classesRef,
+          SMOOTH_N,
+          CONF_THRESH
+        );
+
+        let nextPrediction = staticPred;
+
+        if (dynamicRes.status === "fulfilled" && dynamicRes.value?.data) {
+          const dynamicPred = dynamicRes.value.data;
+          if (
+            ["J", "Z"].includes(dynamicPred.label) &&
+            (dynamicPred.confidence ?? 0) >= DYNAMIC_CONF_THRESH
+          ) {
+            nextPrediction = dynamicPred;
+          }
+        } else if (dynamicRes.status === "rejected") {
+          const status = dynamicRes.reason?.response?.status;
+          if (status === 404 || status === 503) {
+            dynamicEnabledRef.current = false;
+          }
         }
 
-        probsQueueRef.current.push(probs);
-        if (probsQueueRef.current.length > SMOOTH_N) probsQueueRef.current.shift();
-
-        const avg = avgVectors(probsQueueRef.current);
-        const idx = argmax(avg);
-
-        const smoothedLabel = classesRef.current[idx];
-        const smoothedConf = avg[idx] ?? 0;
-
-        const smoothed =
-          smoothedConf >= CONF_THRESH
-            ? { ...raw, label: smoothedLabel, confidence: smoothedConf }
-            : { ...raw, label: "…", confidence: smoothedConf };
-
-        setPrediction(smoothed);
+        setPrediction(nextPrediction);
       } catch (e) {
-        setPrediction({ label: "-", confidence: 0, latency_ms: null });
+        setPrediction({ label: "-", confidence: 0, latency_ms: null, source: "static" });
         probsQueueRef.current = [];
         classesRef.current = null;
       }
@@ -133,6 +189,7 @@ export default function App() {
       <HandTracker
         latestLandmarksRef={latestLandmarksRef}
         latestHandednessRef={latestHandednessRef}
+        sequenceBufferRef={sequenceBufferRef}
         onHandDetected={setHandDetected}
         onStatus={setTrackerStatus}
         onStream={setStream}

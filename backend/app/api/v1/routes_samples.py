@@ -2,6 +2,7 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from pathlib import Path
 
 from app.core.db import get_db
 from app.core.models import Sample
@@ -15,6 +16,8 @@ from sqlalchemy import func
 router = APIRouter(prefix="/v1", tags=["samples"])
 
 ALLOWED_LABELS = set(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + ["NONE"])
+BASE_DIR = Path(__file__).resolve().parents[4]
+SEQUENCE_DATA_PATH = BASE_DIR / "backend" / "data" / "sequences.ndjson"
 
 class SampleIn(BaseModel):
     label: str = Field(..., examples=["G"])
@@ -40,6 +43,33 @@ class SampleOut(BaseModel):
     id: int
     status: str = "stored"
 
+
+class SequenceSampleIn(BaseModel):
+    label: str = Field(..., examples=["J"])
+    frames: List[List[List[float]]] = Field(..., description="N x 21 x 3 list")
+    handedness: Optional[Literal["Left", "Right"]] = None
+    session_id: Optional[str] = None
+
+    def validate_payload(self):
+        if self.label not in ALLOWED_LABELS:
+            raise HTTPException(status_code=400, detail=f"Invalid label: {self.label}")
+        if len(self.frames) < 12:
+            raise HTTPException(status_code=400, detail="frames must contain at least 12 items")
+        if any(
+            not isinstance(frame, list)
+            or len(frame) != 21
+            or any(not isinstance(p, list) or len(p) != 3 for p in frame)
+            for frame in self.frames
+        ):
+            raise HTTPException(status_code=400, detail="frames must be N x 21 x 3")
+
+
+class SequenceSampleOut(BaseModel):
+    status: str = "stored"
+    path: str
+    label: str
+    frames: int
+
 @router.post("/samples", response_model=SampleOut)
 def create_sample(payload: SampleIn, db: Session = Depends(get_db)):
     payload.validate_payload()
@@ -54,6 +84,29 @@ def create_sample(payload: SampleIn, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(row)
     return SampleOut(id=row.id)
+
+
+@router.post("/sequence-samples", response_model=SequenceSampleOut)
+def create_sequence_sample(payload: SequenceSampleIn):
+    payload.validate_payload()
+
+    SEQUENCE_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    record = {
+        "label": payload.label,
+        "frames": payload.frames,
+        "handedness": payload.handedness,
+        "session_id": payload.session_id,
+    }
+
+    with SEQUENCE_DATA_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+    return SequenceSampleOut(
+        path=str(SEQUENCE_DATA_PATH),
+        label=payload.label,
+        frames=len(payload.frames),
+    )
 
 
 @router.get("/samples/export")

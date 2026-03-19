@@ -169,6 +169,7 @@ This makes predictions robust to:
 - Rolling window averaging (frontend)
 - Confidence threshold gating
 - Top-k probability exposure for UI debugging
+- Optional temporal model path for dynamic letters like `J` and `Z`
 
 Artifacts:
 ```
@@ -226,6 +227,7 @@ Frontend Visualization (Vercel)
 Endpoints:
 
 - POST /v1/predict
+- POST /v1/predict-sequence
 - POST /v1/samples
 - POST /v1/attempts
 
@@ -234,8 +236,6 @@ Endpoints:
 - GET /v1/samples/recent
 
 - GET /health
-
----
 
 ### Database
 
@@ -343,6 +343,36 @@ The training script automatically:
 
 Reload the API to use the updated model.
 
+### Dynamic Sequence Training
+
+Dynamic letters such as `J` and `Z` use a separate optional model path so the existing static recognizer remains unchanged.
+
+Sequence dataset format:
+```json
+{
+  "label": "J",
+  "handedness": "Right",
+  "frames": [
+    [[0.1, 0.2, 0.0], [0.1, 0.2, 0.0]],
+    [[0.11, 0.21, 0.0], [0.1, 0.2, 0.0]]
+  ]
+}
+```
+Example above is truncated for readability; each frame should contain all 21 landmarks.
+
+Train the dynamic model with:
+```bash
+python -m backend.scripts.train_dynamic
+```
+
+Notes:
+
+- Saves `backend/models/dynamic_model.joblib`
+- Saves `backend/models/dynamic_metadata.json`
+- Stores captured motion samples in `backend/data/sequences.ndjson`
+- Prefers `XGBoost` if installed, otherwise falls back to `RandomForestClassifier`
+- Frontend buffering and `/v1/predict-sequence` usage are optional and non-breaking
+
 
 ------------------------------------------------------------------------
 
@@ -381,6 +411,6 @@ Returns:
 
 ### Research
 
-- Dynamic sign recognition
+- Gesture sequence recognition beyond single letters
 - Temporal models (LSTM / TCN)
-- Gesture sequence recognition
+- Multi-sign phrase decoding

@@ -52,4 +52,16 @@ def health():
         "classes": bundle.classes or meta.get("classes") or meta.get("labels", []),
         "samples": meta.get("samples", meta.get("num_samples", 0)),
         "latency_ms": bundle.last_latency_ms,
+        "dynamic_model_loaded": bundle.dynamic_model is not None,
+        "dynamic_model_name": (
+            type(bundle.dynamic_model).__name__
+            if bundle.dynamic_model is not None
+            else "unknown"
+        ),
+        "dynamic_model_version": (
+            (bundle.dynamic_meta or {}).get("model_version", "0.1")
+        ),
+        "dynamic_classes": bundle.dynamic_classes
+        or (bundle.dynamic_meta or {}).get("classes", []),
+        "dynamic_latency_ms": bundle.last_dynamic_latency_ms,
     }

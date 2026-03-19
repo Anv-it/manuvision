@@ -2,6 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+const DEFAULT_GUIDED_LETTERS = "GHIJKLMNOPQRSTUVWXYZ".split("");
+const GUIDED_PROGRESS_KEY = "manuvision_guided_progress_v1";
+const GUIDED_LETTERS_KEY = "manuvision_guided_letters_v1";
+const GUIDED_TARGET_KEY = "manuvision_guided_target_v1";
 
 function meanAggregate(frames) {
   const out = Array.from({ length: 21 }, () => [0, 0, 0]);
@@ -18,6 +22,32 @@ function meanAggregate(frames) {
     out[i][2] /= frames.length;
   }
   return out;
+}
+
+function loadProgressMap() {
+  try {
+    const raw = localStorage.getItem(GUIDED_PROGRESS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeLetters(value) {
+  const chars = (value || "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .split("");
+
+  return [...new Set(chars)];
+}
+
+function nextGuidedLetter(letters, progressMap, targetPerLetter) {
+  for (const letter of letters) {
+    if ((progressMap[letter] ?? 0) < targetPerLetter) return letter;
+  }
+  return letters[0] ?? "A";
 }
 
 export default function Translate({
@@ -53,7 +83,40 @@ export default function Translate({
 
   const [targetLabel, setTargetLabel] = useState("A");
   const [saving, setSaving] = useState(false);
+  const [sequenceSaving, setSequenceSaving] = useState(false);
   const [lastSavedId, setLastSavedId] = useState(null);
+  const [lastSequenceSaved, setLastSequenceSaved] = useState(null);
+  const [guidedEnabled, setGuidedEnabled] = useState(true);
+  const [guidedLettersInput, setGuidedLettersInput] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_GUIDED_LETTERS.join("");
+    return localStorage.getItem(GUIDED_LETTERS_KEY) ?? DEFAULT_GUIDED_LETTERS.join("");
+  });
+  const [targetPerLetter, setTargetPerLetter] = useState(() => {
+    if (typeof window === "undefined") return 30;
+    const raw = Number(localStorage.getItem(GUIDED_TARGET_KEY) ?? 30);
+    return Number.isFinite(raw) ? Math.max(1, Math.min(200, raw)) : 30;
+  });
+  const [guidedProgress, setGuidedProgress] = useState(() => {
+    if (typeof window === "undefined") return {};
+    return loadProgressMap();
+  });
+
+  const guidedLetters = normalizeLetters(guidedLettersInput);
+  const guidedActiveLetter = nextGuidedLetter(
+    guidedLetters,
+    guidedProgress,
+    targetPerLetter
+  );
+  const guidedCompleteCount = guidedLetters.filter(
+    (letter) => (guidedProgress[letter] ?? 0) >= targetPerLetter
+  ).length;
+  const guidedTotalNeeded = guidedLetters.length * targetPerLetter;
+  const guidedCollected = guidedLetters.reduce(
+    (sum, letter) => sum + Math.min(guidedProgress[letter] ?? 0, targetPerLetter),
+    0
+  );
+  const guidedPercent =
+    guidedTotalNeeded > 0 ? Math.round((guidedCollected / guidedTotalNeeded) * 100) : 0;
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -61,9 +124,27 @@ export default function Translate({
     }
   }, [stream]);
 
+  useEffect(() => {
+    if (!guidedEnabled || guidedLetters.length === 0) return;
+    setTargetLabel(guidedActiveLetter);
+  }, [guidedEnabled, guidedActiveLetter, guidedLetters.length]);
+
+  useEffect(() => {
+    localStorage.setItem(GUIDED_PROGRESS_KEY, JSON.stringify(guidedProgress));
+  }, [guidedProgress]);
+
+  useEffect(() => {
+    localStorage.setItem(GUIDED_LETTERS_KEY, guidedLettersInput);
+  }, [guidedLettersInput]);
+
+  useEffect(() => {
+    localStorage.setItem(GUIDED_TARGET_KEY, String(targetPerLetter));
+  }, [targetPerLetter]);
+
   async function captureSample() {
     const CAPTURE_FRAMES = 10;
     const frames = [];
+    const activeLabel = guidedEnabled && guidedLetters.length > 0 ? guidedActiveLetter : targetLabel;
 
     setSaving(true);
     try {
@@ -82,18 +163,67 @@ export default function Translate({
       localStorage.setItem("manuvision_session_id", session_id);
 
       const res = await axios.post(`${API_BASE}/v1/samples`, {
-        label: targetLabel,
+        label: activeLabel,
         landmarks: aggregated,
         handedness: latestHandednessRef?.current ?? null,
         session_id,
       });
 
       setLastSavedId(res.data?.id ?? null);
+      setTargetLabel(activeLabel);
+
+      if (guidedEnabled && guidedLetters.length > 0) {
+        setGuidedProgress((current) => {
+          const next = {
+            ...current,
+            [activeLabel]: (current[activeLabel] ?? 0) + 1,
+          };
+          return next;
+        });
+      }
     } catch (e) {
       console.error(e);
       alert("Failed to save sample. Check console + backend logs.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function captureSequenceSample() {
+    const CAPTURE_FRAMES = 24;
+    const frames = [];
+    const activeLabel = guidedEnabled && guidedLetters.length > 0 ? guidedActiveLetter : targetLabel;
+
+    setSequenceSaving(true);
+    try {
+      for (let i = 0; i < CAPTURE_FRAMES; i++) {
+        const lm = latestLandmarksRef?.current;
+        if (lm && lm.length === 21) frames.push(lm);
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      if (frames.length < 12) {
+        throw new Error("Not enough motion frames captured (hand lost?)");
+      }
+
+      const session_id =
+        localStorage.getItem("manuvision_session_id") ?? crypto.randomUUID();
+      localStorage.setItem("manuvision_session_id", session_id);
+
+      const res = await axios.post(`${API_BASE}/v1/sequence-samples`, {
+        label: activeLabel,
+        frames,
+        handedness: latestHandednessRef?.current ?? null,
+        session_id,
+      });
+
+      setLastSequenceSaved(`${res.data?.label ?? activeLabel} (${res.data?.frames ?? frames.length}f)`);
+      setTargetLabel(activeLabel);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save motion sample. Check console + backend logs.");
+    } finally {
+      setSequenceSaving(false);
     }
   }
 
@@ -139,6 +269,7 @@ export default function Translate({
             className="border rounded-lg px-3 py-2 text-sm bg-white"
             value={targetLabel}
             onChange={(e) => setTargetLabel(e.target.value)}
+            disabled={guidedEnabled && guidedLetters.length > 0}
           >
             {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((ch) => (
               <option key={ch} value={ch}>
@@ -160,9 +291,173 @@ export default function Translate({
             {saving ? "Saving..." : "Capture Sample"}
           </button>
 
+          <button
+            onClick={captureSequenceSample}
+            disabled={
+              sequenceSaving ||
+              !latestLandmarksRef?.current ||
+              !["J", "Z"].includes(targetLabel)
+            }
+            className={[
+              "px-4 py-2 rounded-lg text-sm font-medium transition border",
+              sequenceSaving || !latestLandmarksRef?.current || !["J", "Z"].includes(targetLabel)
+                ? "bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed"
+                : "bg-white text-zinc-900 border-zinc-300 hover:bg-zinc-50",
+            ].join(" ")}
+            title={
+              ["J", "Z"].includes(targetLabel)
+                ? "Capture a motion sequence for the current label"
+                : "Motion capture is only used for J and Z"
+            }
+          >
+            {sequenceSaving ? "Saving Motion..." : "Capture Motion"}
+          </button>
+
           {lastSavedId && (
             <span className="text-sm text-zinc-600">Saved #{lastSavedId}</span>
           )}
+
+          {lastSequenceSaved && (
+            <span className="text-sm text-zinc-600">Motion {lastSequenceSaved}</span>
+          )}
+        </div>
+
+        <div className="mt-5 rounded-2xl border bg-zinc-50 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-medium text-zinc-900">Guided Dataset Builder</div>
+              <div className="mt-1 text-xs text-zinc-500">
+                Collect smaller seed sets for each missing letter, then let training augmentation
+                expand weak classes.
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setGuidedEnabled((value) => !value)}
+              className={[
+                "rounded-full px-3 py-1 text-xs font-medium",
+                guidedEnabled ? "bg-black text-white" : "bg-white border text-zinc-700",
+              ].join(" ")}
+            >
+              {guidedEnabled ? "Guided On" : "Guided Off"}
+            </button>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_0.8fr]">
+            <label className="block">
+              <div className="text-xs text-zinc-500">Letters to collect</div>
+              <input
+                value={guidedLettersInput}
+                onChange={(e) => setGuidedLettersInput(e.target.value)}
+                className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm"
+                placeholder="GHIJKLMNOPQRSTUVWXYZ"
+              />
+            </label>
+
+            <label className="block">
+              <div className="text-xs text-zinc-500">Target per letter</div>
+              <input
+                type="number"
+                min="1"
+                max="200"
+                value={targetPerLetter}
+                onChange={(e) => {
+                  const value = Number(e.target.value);
+                  if (!Number.isFinite(value)) return;
+                  setTargetPerLetter(Math.max(1, Math.min(200, value)));
+                }}
+                className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 rounded-xl border bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-xs text-zinc-500">Current guided letter</div>
+                <div className="mt-1 text-3xl font-semibold tracking-tight">
+                  {guidedLetters.length > 0 ? guidedActiveLetter : "—"}
+                </div>
+              </div>
+
+              <div className="text-right">
+                <div className="text-xs text-zinc-500">Progress</div>
+                <div className="mt-1 text-sm font-medium text-zinc-900">
+                  {guidedCollected}/{guidedTotalNeeded || 0} samples
+                </div>
+                <div className="text-xs text-zinc-500">
+                  {guidedCompleteCount}/{guidedLetters.length} letters complete
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+              <div
+                className="h-full bg-black transition-all"
+                style={{ width: `${Math.min(100, Math.max(0, guidedPercent))}%` }}
+              />
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {guidedLetters.length > 0 ? (
+                guidedLetters.map((letter) => {
+                  const count = guidedProgress[letter] ?? 0;
+                  const done = count >= targetPerLetter;
+                  const active = letter === guidedActiveLetter && !done;
+
+                  return (
+                    <div
+                      key={letter}
+                      className={[
+                        "rounded-lg border px-3 py-2 text-xs",
+                        done
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : active
+                          ? "border-black bg-black text-white"
+                          : "border-zinc-200 bg-zinc-50 text-zinc-700",
+                      ].join(" ")}
+                    >
+                      {letter} {Math.min(count, targetPerLetter)}/{targetPerLetter}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-sm text-zinc-500">
+                  Enter at least one letter to enable guided capture.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => setGuidedProgress({})}
+                className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-zinc-50"
+              >
+                Reset Progress
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setGuidedProgress((current) => ({
+                    ...current,
+                    [guidedActiveLetter]: targetPerLetter,
+                  }))
+                }
+                disabled={guidedLetters.length === 0}
+                className={[
+                  "rounded-lg px-3 py-2 text-sm",
+                  guidedLetters.length === 0
+                    ? "cursor-not-allowed bg-zinc-200 text-zinc-500"
+                    : "border bg-white hover:bg-zinc-50",
+                ].join(" ")}
+              >
+                Skip Current Letter
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
